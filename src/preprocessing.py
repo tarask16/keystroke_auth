@@ -8,7 +8,10 @@ Current step:
 - detect feature columns;
 - split dataset into X, y and metadata;
 - clean invalid values and simple outliers;
-- create stratified train/validation/test split.
+- create stratified train/validation/test split;
+- scale features with StandardScaler fitted on train only;
+- save fitted scaler to models/scaler.pkl;
+- save split metadata to data/processed/cmu_split.json.
 
 Important CMU detail:
 UD.* features may be negative. This is normal for overlapping keystrokes:
@@ -18,12 +21,15 @@ the next key can be pressed before the previous key is released.
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
 from src.config import CMU_FEATURES_FILE, RANDOM_SEED
 from src.data_loader import PROCESSED_META_COLUMNS, get_processed_feature_columns
@@ -33,6 +39,8 @@ OUTLIER_LOWER_QUANTILE = 0.01
 OUTLIER_UPPER_QUANTILE = 0.99
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_VALIDATION_SIZE = 0.2
+DEFAULT_SCALER_OUTPUT = Path(__file__).resolve().parents[1] / "models" / "scaler.pkl"
+DEFAULT_SPLIT_OUTPUT = Path(__file__).resolve().parents[1] / "data" / "processed" / "cmu_split.json"
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,22 @@ class TrainValidationTestSplit:
     metadata_train: pd.DataFrame
     metadata_validation: pd.DataFrame
     metadata_test: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class ScaledTrainValidationTestSplit:
+    """Container for scaled train/validation/test split."""
+
+    X_train: pd.DataFrame
+    X_validation: pd.DataFrame
+    X_test: pd.DataFrame
+    y_train: pd.Series
+    y_validation: pd.Series
+    y_test: pd.Series
+    metadata_train: pd.DataFrame
+    metadata_validation: pd.DataFrame
+    metadata_test: pd.DataFrame
+    scaler: StandardScaler
 
 
 def load_processed_dataset(path: Path) -> pd.DataFrame:
@@ -532,6 +556,106 @@ def validate_split_part_lengths(
         raise ValueError(f"{split_name} split has inconsistent X/metadata lengths.")
 
 
+def scale_train_validation_test_split(
+    split: TrainValidationTestSplit,
+) -> ScaledTrainValidationTestSplit:
+    """Scale train/validation/test features using StandardScaler.
+
+    The scaler is fitted only on X_train to avoid data leakage.
+    Validation and test data are transformed with the already fitted scaler.
+
+    Args:
+        split: Train/validation/test split container.
+
+    Returns:
+        Scaled split container and fitted scaler.
+    """
+    scaler = StandardScaler()
+
+    X_train_scaled = pd.DataFrame(
+        scaler.fit_transform(split.X_train),
+        columns=split.X_train.columns,
+    )
+    X_validation_scaled = pd.DataFrame(
+        scaler.transform(split.X_validation),
+        columns=split.X_validation.columns,
+    )
+    X_test_scaled = pd.DataFrame(
+        scaler.transform(split.X_test),
+        columns=split.X_test.columns,
+    )
+
+    scaled = ScaledTrainValidationTestSplit(
+        X_train=X_train_scaled,
+        X_validation=X_validation_scaled,
+        X_test=X_test_scaled,
+        y_train=split.y_train.copy(),
+        y_validation=split.y_validation.copy(),
+        y_test=split.y_test.copy(),
+        metadata_train=split.metadata_train.copy(),
+        metadata_validation=split.metadata_validation.copy(),
+        metadata_test=split.metadata_test.copy(),
+        scaler=scaler,
+    )
+
+    validate_scaled_train_validation_test_split(scaled)
+
+    return scaled
+
+
+def validate_scaled_train_validation_test_split(
+    split: ScaledTrainValidationTestSplit,
+) -> None:
+    """Validate scaled train/validation/test split.
+
+    Args:
+        split: Scaled train/validation/test split container.
+
+    Raises:
+        ValueError: If split lengths are inconsistent or scaled values are invalid.
+    """
+    validate_split_part_lengths(split.X_train, split.y_train, split.metadata_train, "train")
+    validate_split_part_lengths(
+        split.X_validation,
+        split.y_validation,
+        split.metadata_validation,
+        "validation",
+    )
+    validate_split_part_lengths(split.X_test, split.y_test, split.metadata_test, "test")
+
+    for split_name, X in (
+        ("train", split.X_train),
+        ("validation", split.X_validation),
+        ("test", split.X_test),
+    ):
+        values = X.to_numpy()
+        if np.isnan(values).any():
+            raise ValueError(f"Scaled {split_name} features contain NaN values.")
+        if np.isinf(values).any():
+            raise ValueError(f"Scaled {split_name} features contain infinite values.")
+
+
+def summarize_scaled_split(split: ScaledTrainValidationTestSplit) -> dict[str, float]:
+    """Create summary for scaled train/validation/test split.
+
+    Args:
+        split: Scaled train/validation/test split container.
+
+    Returns:
+        Summary dictionary.
+    """
+    train_values = split.X_train.to_numpy()
+
+    return {
+        "train_rows": float(split.X_train.shape[0]),
+        "validation_rows": float(split.X_validation.shape[0]),
+        "test_rows": float(split.X_test.shape[0]),
+        "features": float(split.X_train.shape[1]),
+        "max_abs_train_mean": float(np.abs(train_values.mean(axis=0)).max()),
+        "max_abs_train_std_delta": float(np.abs(train_values.std(axis=0) - 1.0).max()),
+    }
+
+
 def validate_prepared_dataset_consistency(prepared: PreparedDataset) -> None:
     """Validate consistency of X, y and metadata lengths.
 
@@ -627,6 +751,108 @@ def summarize_train_validation_test_split(split: TrainValidationTestSplit) -> di
     }
 
 
+def save_scaler(scaler: StandardScaler, output_path: Path) -> None:
+    """Save fitted StandardScaler to disk.
+
+    Args:
+        scaler: Fitted StandardScaler instance.
+        output_path: Path to scaler.pkl.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(scaler, output_path)
+
+
+def save_split_metadata(
+    split: ScaledTrainValidationTestSplit,
+    output_path: Path,
+    test_size: float,
+    validation_size: float,
+    random_state: int,
+) -> None:
+    """Save train/validation/test split metadata to JSON.
+
+    The JSON file stores sample identifiers for each split. It does not store
+    feature values. This allows future training and evaluation scripts to
+    reproduce the same split without recalculating random partitions.
+
+    Args:
+        split: Scaled train/validation/test split container.
+        output_path: Path to cmu_split.json.
+        test_size: Fraction of all samples assigned to the test split.
+        validation_size: Fraction of train_full assigned to validation split.
+        random_state: Random seed used for splitting.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = build_split_metadata_payload(
+        split=split,
+        test_size=test_size,
+        validation_size=validation_size,
+        random_state=random_state,
+    )
+
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def build_split_metadata_payload(
+    split: ScaledTrainValidationTestSplit,
+    test_size: float,
+    validation_size: float,
+    random_state: int,
+) -> dict[str, object]:
+    """Build JSON-serializable split metadata payload.
+
+    Args:
+        split: Scaled train/validation/test split container.
+        test_size: Fraction of all samples assigned to the test split.
+        validation_size: Fraction of train_full assigned to validation split.
+        random_state: Random seed used for splitting.
+
+    Returns:
+        JSON-serializable dictionary.
+    """
+    feature_columns = split.X_train.columns.to_list()
+
+    return {
+        "dataset": "cmu_keystroke_dynamics",
+        "random_state": random_state,
+        "test_size": test_size,
+        "validation_size": validation_size,
+        "feature_columns": feature_columns,
+        "counts": {
+            "train": int(len(split.y_train)),
+            "validation": int(len(split.y_validation)),
+            "test": int(len(split.y_test)),
+            "features": int(len(feature_columns)),
+        },
+        "users": {
+            "train": sorted(split.y_train.unique().tolist()),
+            "validation": sorted(split.y_validation.unique().tolist()),
+            "test": sorted(split.y_test.unique().tolist()),
+        },
+        "splits": {
+            "train": metadata_to_records(split.metadata_train),
+            "validation": metadata_to_records(split.metadata_validation),
+            "test": metadata_to_records(split.metadata_test),
+        },
+    }
+
+
+def metadata_to_records(metadata: pd.DataFrame) -> list[dict[str, object]]:
+    """Convert split metadata DataFrame to JSON records.
+
+    Args:
+        metadata: Split metadata with user_id, session_index, rep and sample_id.
+
+    Returns:
+        List of JSON-serializable records.
+    """
+    return metadata.loc[:, PROCESSED_META_COLUMNS].to_dict(orient="records")
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build command-line argument parser.
 
@@ -656,6 +882,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Fraction of train_full samples assigned to the validation split.",
     )
 
+    parser.add_argument(
+        "--scaler-output",
+        type=Path,
+        default=DEFAULT_SCALER_OUTPUT,
+        help="Path to save fitted StandardScaler as .pkl.",
+    )
+
+    parser.add_argument(
+        "--split-output",
+        type=Path,
+        default=DEFAULT_SPLIT_OUTPUT,
+        help="Path to save train/validation/test split metadata as JSON.",
+    )
+
     return parser
 
 
@@ -682,6 +922,18 @@ def main() -> None:
         validation_size=args.validation_size,
     )
     tvt_summary = summarize_train_validation_test_split(train_validation_test)
+
+    scaled = scale_train_validation_test_split(train_validation_test)
+    scaled_summary = summarize_scaled_split(scaled)
+
+    save_scaler(scaled.scaler, args.scaler_output)
+    save_split_metadata(
+        split=scaled,
+        output_path=args.split_output,
+        test_size=args.test_size,
+        validation_size=args.validation_size,
+        random_state=RANDOM_SEED,
+    )
 
     print("Processed dataset loaded successfully.")
     print(f"Input: {args.input}")
@@ -745,6 +997,26 @@ def main() -> None:
     print(f"Validation users: {tvt_summary['validation_users']}")
     print(f"Test users: {tvt_summary['test_users']}")
     print(f"Features: {tvt_summary['features']}")
+
+    print()
+    print("Scaled train/validation/test dataset:")
+    print(f"Scaled train X shape: {scaled.X_train.shape}")
+    print(f"Scaled validation X shape: {scaled.X_validation.shape}")
+    print(f"Scaled test X shape: {scaled.X_test.shape}")
+    print(f"Features: {int(scaled_summary['features'])}")
+    print(f"Max abs train mean: {scaled_summary['max_abs_train_mean']:.10f}")
+    print(f"Max abs train std delta: {scaled_summary['max_abs_train_std_delta']:.10f}")
+
+    print()
+    print("Scaler saved:")
+    print(f"Path: {args.scaler_output}")
+
+    print()
+    print("Split metadata saved:")
+    print(f"Path: {args.split_output}")
+    print(f"Train samples: {len(scaled.metadata_train)}")
+    print(f"Validation samples: {len(scaled.metadata_validation)}")
+    print(f"Test samples: {len(scaled.metadata_test)}")
 
 
 if __name__ == "__main__":
