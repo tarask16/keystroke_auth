@@ -8,7 +8,7 @@ Current step:
 - detect feature columns;
 - split dataset into X, y and metadata;
 - clean invalid values and simple outliers;
-- create stratified train/test split.
+- create stratified train/validation/test split.
 
 Important CMU detail:
 UD.* features may be negative. This is normal for overlapping keystrokes:
@@ -32,6 +32,7 @@ from src.data_loader import PROCESSED_META_COLUMNS, get_processed_feature_column
 OUTLIER_LOWER_QUANTILE = 0.01
 OUTLIER_UPPER_QUANTILE = 0.99
 DEFAULT_TEST_SIZE = 0.2
+DEFAULT_VALIDATION_SIZE = 0.2
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,21 @@ class TrainTestSplit:
     y_train: pd.Series
     y_test: pd.Series
     metadata_train: pd.DataFrame
+    metadata_test: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class TrainValidationTestSplit:
+    """Container for train/validation/test split."""
+
+    X_train: pd.DataFrame
+    X_validation: pd.DataFrame
+    X_test: pd.DataFrame
+    y_train: pd.Series
+    y_validation: pd.Series
+    y_test: pd.Series
+    metadata_train: pd.DataFrame
+    metadata_validation: pd.DataFrame
     metadata_test: pd.DataFrame
 
 
@@ -365,6 +381,65 @@ def create_train_test_split(
     return split
 
 
+def create_train_validation_test_split(
+    prepared: PreparedDataset,
+    test_size: float = DEFAULT_TEST_SIZE,
+    validation_size: float = DEFAULT_VALIDATION_SIZE,
+    random_state: int = RANDOM_SEED,
+) -> TrainValidationTestSplit:
+    """Create stratified train/validation/test split.
+
+    The dataset is first split into train_full/test. Then train_full is split
+    into train/validation. With default values, the final distribution is:
+    - train: 64%
+    - validation: 16%
+    - test: 20%
+
+    Args:
+        prepared: Cleaned prepared dataset.
+        test_size: Fraction of all samples assigned to test split.
+        validation_size: Fraction of train_full assigned to validation split.
+        random_state: Random seed for reproducibility.
+
+    Returns:
+        TrainValidationTestSplit container.
+
+    Raises:
+        ValueError: If split parameters are invalid or inconsistent.
+    """
+    if not 0 < validation_size < 1:
+        raise ValueError(f"validation_size must be between 0 and 1, got: {validation_size}")
+
+    train_test = create_train_test_split(
+        prepared=prepared,
+        test_size=test_size,
+        random_state=random_state,
+    )
+
+    train_index, validation_index = train_test_split(
+        train_test.X_train.index,
+        test_size=validation_size,
+        random_state=random_state,
+        stratify=train_test.y_train,
+    )
+
+    split = TrainValidationTestSplit(
+        X_train=train_test.X_train.loc[train_index].reset_index(drop=True),
+        X_validation=train_test.X_train.loc[validation_index].reset_index(drop=True),
+        X_test=train_test.X_test,
+        y_train=train_test.y_train.loc[train_index].reset_index(drop=True),
+        y_validation=train_test.y_train.loc[validation_index].reset_index(drop=True),
+        y_test=train_test.y_test,
+        metadata_train=train_test.metadata_train.loc[train_index].reset_index(drop=True),
+        metadata_validation=train_test.metadata_train.loc[validation_index].reset_index(drop=True),
+        metadata_test=train_test.metadata_test,
+    )
+
+    validate_train_validation_test_split(split)
+
+    return split
+
+
 def validate_train_test_split(split: TrainTestSplit) -> None:
     """Validate train/test split consistency.
 
@@ -397,6 +472,64 @@ def validate_train_test_split(split: TrainTestSplit) -> None:
             f"Missing in train: {missing_in_train}. "
             f"Missing in test: {missing_in_test}."
         )
+
+
+def validate_train_validation_test_split(split: TrainValidationTestSplit) -> None:
+    """Validate train/validation/test split consistency.
+
+    Args:
+        split: Train/validation/test split container.
+
+    Raises:
+        ValueError: If split lengths are inconsistent or user classes are missing.
+    """
+    validate_split_part_lengths(split.X_train, split.y_train, split.metadata_train, "train")
+    validate_split_part_lengths(
+        split.X_validation,
+        split.y_validation,
+        split.metadata_validation,
+        "validation",
+    )
+    validate_split_part_lengths(split.X_test, split.y_test, split.metadata_test, "test")
+
+    train_users = set(split.y_train.unique())
+    validation_users = set(split.y_validation.unique())
+    test_users = set(split.y_test.unique())
+
+    if train_users != validation_users or train_users != test_users:
+        missing_in_train = sorted((validation_users | test_users) - train_users)
+        missing_in_validation = sorted((train_users | test_users) - validation_users)
+        missing_in_test = sorted((train_users | validation_users) - test_users)
+        raise ValueError(
+            "Train/validation/test split lost user classes. "
+            f"Missing in train: {missing_in_train}. "
+            f"Missing in validation: {missing_in_validation}. "
+            f"Missing in test: {missing_in_test}."
+        )
+
+
+def validate_split_part_lengths(
+    X: pd.DataFrame,
+    y: pd.Series,
+    metadata: pd.DataFrame,
+    split_name: str,
+) -> None:
+    """Validate X/y/metadata lengths for one split part.
+
+    Args:
+        X: Feature matrix.
+        y: User labels.
+        metadata: Service metadata.
+        split_name: Human-readable split name.
+
+    Raises:
+        ValueError: If lengths are inconsistent.
+    """
+    if len(X) != len(y):
+        raise ValueError(f"{split_name} split has inconsistent X/y lengths.")
+
+    if len(X) != len(metadata):
+        raise ValueError(f"{split_name} split has inconsistent X/metadata lengths.")
 
 
 def validate_prepared_dataset_consistency(prepared: PreparedDataset) -> None:
@@ -474,6 +607,26 @@ def summarize_train_test_split(split: TrainTestSplit) -> dict[str, int]:
     }
 
 
+def summarize_train_validation_test_split(split: TrainValidationTestSplit) -> dict[str, int]:
+    """Create train/validation/test split summary.
+
+    Args:
+        split: Train/validation/test split container.
+
+    Returns:
+        Summary dictionary.
+    """
+    return {
+        "train_rows": int(split.X_train.shape[0]),
+        "validation_rows": int(split.X_validation.shape[0]),
+        "test_rows": int(split.X_test.shape[0]),
+        "train_users": int(split.y_train.nunique()),
+        "validation_users": int(split.y_validation.nunique()),
+        "test_users": int(split.y_test.nunique()),
+        "features": int(split.X_train.shape[1]),
+    }
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build command-line argument parser.
 
@@ -496,6 +649,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Fraction of samples assigned to the test split.",
     )
 
+    parser.add_argument(
+        "--validation-size",
+        type=float,
+        default=DEFAULT_VALIDATION_SIZE,
+        help="Fraction of train_full samples assigned to the validation split.",
+    )
+
     return parser
 
 
@@ -515,6 +675,13 @@ def main() -> None:
 
     train_test = create_train_test_split(cleaned, test_size=args.test_size)
     split_summary = summarize_train_test_split(train_test)
+
+    train_validation_test = create_train_validation_test_split(
+        cleaned,
+        test_size=args.test_size,
+        validation_size=args.validation_size,
+    )
+    tvt_summary = summarize_train_validation_test_split(train_validation_test)
 
     print("Processed dataset loaded successfully.")
     print(f"Input: {args.input}")
@@ -562,6 +729,22 @@ def main() -> None:
     print(f"Train users: {split_summary['train_users']}")
     print(f"Test users: {split_summary['test_users']}")
     print(f"Features: {split_summary['features']}")
+
+    print()
+    print("Train/validation/test split:")
+    print(f"Train X shape: {train_validation_test.X_train.shape}")
+    print(f"Validation X shape: {train_validation_test.X_validation.shape}")
+    print(f"Test X shape: {train_validation_test.X_test.shape}")
+    print(f"Train y shape: {train_validation_test.y_train.shape}")
+    print(f"Validation y shape: {train_validation_test.y_validation.shape}")
+    print(f"Test y shape: {train_validation_test.y_test.shape}")
+    print(f"Train metadata shape: {train_validation_test.metadata_train.shape}")
+    print(f"Validation metadata shape: {train_validation_test.metadata_validation.shape}")
+    print(f"Test metadata shape: {train_validation_test.metadata_test.shape}")
+    print(f"Train users: {tvt_summary['train_users']}")
+    print(f"Validation users: {tvt_summary['validation_users']}")
+    print(f"Test users: {tvt_summary['test_users']}")
+    print(f"Features: {tvt_summary['features']}")
 
 
 if __name__ == "__main__":
