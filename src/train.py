@@ -5,9 +5,8 @@ Current step:
 - reuse preprocessing pipeline;
 - encode user labels;
 - train baseline MLP classifier;
-- print train/validation/test metrics.
-
-This step does not save the trained model yet.
+- print train/validation/test metrics;
+- save trained model and label encoder.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
+import joblib
 import numpy as np
 import tensorflow as tf
 from sklearn.preprocessing import LabelEncoder
@@ -41,6 +41,8 @@ from src.preprocessing import (
 DEFAULT_EPOCHS = 20
 DEFAULT_BATCH_SIZE = 128
 DEFAULT_EARLY_STOPPING_PATIENCE = 5
+DEFAULT_MODEL_OUTPUT = Path(__file__).resolve().parents[1] / "models" / "mlp_baseline.keras"
+DEFAULT_LABEL_ENCODER_OUTPUT = Path(__file__).resolve().parents[1] / "models" / "label_encoder.pkl"
 
 
 @dataclass(frozen=True)
@@ -264,6 +266,27 @@ def get_last_metric(history: keras.callbacks.History, metric_name: str) -> float
     return float(values[-1])
 
 
+def save_training_artifacts(
+    model: keras.Model,
+    label_encoder: LabelEncoder,
+    model_output: Path,
+    label_encoder_output: Path,
+) -> None:
+    """Save trained model and label encoder.
+
+    Args:
+        model: Trained Keras model.
+        label_encoder: Fitted LabelEncoder for user_id to class index mapping.
+        model_output: Path to .keras model file.
+        label_encoder_output: Path to label_encoder.pkl file.
+    """
+    model_output.parent.mkdir(parents=True, exist_ok=True)
+    label_encoder_output.parent.mkdir(parents=True, exist_ok=True)
+
+    model.save(model_output)
+    joblib.dump(label_encoder, label_encoder_output)
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build command-line argument parser.
 
@@ -314,6 +337,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_EARLY_STOPPING_PATIENCE,
         help="Early stopping patience by validation accuracy.",
     )
+    parser.add_argument(
+        "--model-output",
+        type=Path,
+        default=DEFAULT_MODEL_OUTPUT,
+        help="Path to save trained Keras model.",
+    )
+    parser.add_argument(
+        "--label-encoder-output",
+        type=Path,
+        default=DEFAULT_LABEL_ENCODER_OUTPUT,
+        help="Path to save fitted label encoder.",
+    )
 
     return parser
 
@@ -339,7 +374,7 @@ def main() -> None:
     print()
     print("Training MLP baseline...")
 
-    _model, result = train_model(
+    model, result = train_model(
         split=split,
         labels=labels,
         hidden_units=args.hidden_units,
@@ -363,6 +398,18 @@ def main() -> None:
     print(f"Final validation accuracy: {final_validation_accuracy:.4f}")
     print(f"Test loss: {result.test_loss:.4f}")
     print(f"Test accuracy: {result.test_accuracy:.4f}")
+
+    save_training_artifacts(
+        model=model,
+        label_encoder=labels.label_encoder,
+        model_output=args.model_output,
+        label_encoder_output=args.label_encoder_output,
+    )
+
+    print()
+    print("Training artifacts saved:")
+    print(f"Model path: {args.model_output}")
+    print(f"Label encoder path: {args.label_encoder_output}")
 
 
 if __name__ == "__main__":
