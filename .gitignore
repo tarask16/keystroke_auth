@@ -1,0 +1,29 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+
+# IDE
+.vscode/settings.local.json
+.idea/
+
+# Data and generated artifacts
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*.csv
+data/processed/*.json
+models/*.keras
+models/*.pkl
+reports/*.png
+reports/*.json
+users/*.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
