@@ -7,6 +7,7 @@ Current step:
 - evaluate saved model on validation and test splits;
 - print extended classification diagnostics;
 - calculate authentication-oriented FAR, FRR and EER diagnostics;
+- build threshold policy for target FAR levels;
 - save reports to CSV.
 """
 
@@ -45,6 +46,10 @@ DEFAULT_AUTHENTICATION_METRICS_OUTPUT = PROJECT_ROOT / "reports" / "authenticati
 DEFAULT_AUTHENTICATION_SCORE_SUMMARY_OUTPUT = (
     PROJECT_ROOT / "reports" / "authentication_score_summary.csv"
 )
+DEFAULT_AUTHENTICATION_THRESHOLD_POLICY_OUTPUT = (
+    PROJECT_ROOT / "reports" / "authentication_threshold_policy.csv"
+)
+DEFAULT_TARGET_FAR_VALUES = (0.001, 0.005, 0.01, 0.02)
 DEFAULT_TOP_N = 10
 DEFAULT_THRESHOLD_POINTS = 1001
 REFERENCE_THRESHOLD = 0.5
@@ -104,6 +109,7 @@ class AuthenticationDiagnostics:
     frr_at_reference_threshold: float
     threshold_table: pd.DataFrame
     score_summary: pd.DataFrame
+    threshold_policy: pd.DataFrame
 
 
 def load_unscaled_split(input_path: Path) -> TrainValidationTestSplit:
@@ -405,6 +411,10 @@ def build_authentication_diagnostics(
         genuine_scores=genuine_scores,
         impostor_scores=impostor_scores,
     )
+    threshold_policy = build_threshold_policy(
+        threshold_table=threshold_table,
+        target_far_values=DEFAULT_TARGET_FAR_VALUES,
+    )
 
     return AuthenticationDiagnostics(
         genuine_trials=int(genuine_scores.shape[0]),
@@ -417,6 +427,7 @@ def build_authentication_diagnostics(
         frr_at_reference_threshold=float(reference_row["frr"]),
         threshold_table=threshold_table,
         score_summary=score_summary,
+        threshold_policy=threshold_policy,
     )
 
 
@@ -514,6 +525,46 @@ def calculate_single_threshold_metrics(
     }
 
 
+def build_threshold_policy(
+    threshold_table: pd.DataFrame,
+    target_far_values: tuple[float, ...],
+) -> pd.DataFrame:
+    """Build threshold recommendations for target FAR levels.
+
+    For each target FAR, select the lowest threshold that satisfies FAR <= target.
+    This keeps FRR as low as possible while meeting the requested FAR bound.
+
+    Args:
+        threshold_table: FAR/FRR table by threshold.
+        target_far_values: Target FAR levels, for example 0.001 for 0.1%.
+
+    Returns:
+        DataFrame with threshold recommendations.
+    """
+    rows: list[dict[str, float]] = []
+
+    for target_far in target_far_values:
+        candidates = threshold_table.loc[threshold_table["far"] <= target_far]
+
+        if candidates.empty:
+            selected = threshold_table.sort_values(by="far", ascending=True).iloc[0]
+        else:
+            selected = candidates.sort_values(by="threshold", ascending=True).iloc[0]
+
+        rows.append(
+            {
+                "target_far": float(target_far),
+                "threshold": float(selected["threshold"]),
+                "actual_far": float(selected["far"]),
+                "actual_frr": float(selected["frr"]),
+                "far_per_10000_impostor_trials": float(selected["far"] * 10000),
+                "frr_per_10000_genuine_trials": float(selected["frr"] * 10000),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def build_score_summary(
     genuine_scores: np.ndarray,
     impostor_scores: np.ndarray,
@@ -566,6 +617,7 @@ def save_diagnostics(
     confusion_matrix_output: Path,
     authentication_metrics_output: Path,
     authentication_score_summary_output: Path,
+    authentication_threshold_policy_output: Path,
 ) -> None:
     """Save classification and authentication diagnostics to CSV files.
 
@@ -576,12 +628,14 @@ def save_diagnostics(
         confusion_matrix_output: Output CSV path for confusion matrix.
         authentication_metrics_output: Output CSV path for FAR/FRR table.
         authentication_score_summary_output: Output CSV path for score summary.
+        authentication_threshold_policy_output: Output CSV path for threshold policy.
     """
     for output_path in (
         classification_report_output,
         confusion_matrix_output,
         authentication_metrics_output,
         authentication_score_summary_output,
+        authentication_threshold_policy_output,
     ):
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -596,6 +650,10 @@ def save_diagnostics(
     )
     authentication_diagnostics.score_summary.to_csv(
         authentication_score_summary_output,
+        index=False,
+    )
+    authentication_diagnostics.threshold_policy.to_csv(
+        authentication_threshold_policy_output,
         index=False,
     )
 
@@ -655,6 +713,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_AUTHENTICATION_SCORE_SUMMARY_OUTPUT,
         help="Path to output authentication score summary CSV.",
+    )
+    parser.add_argument(
+        "--authentication-threshold-policy-output",
+        type=Path,
+        default=DEFAULT_AUTHENTICATION_THRESHOLD_POLICY_OUTPUT,
+        help="Path to output authentication threshold policy CSV.",
     )
     parser.add_argument(
         "--top-n",
@@ -721,6 +785,7 @@ def main() -> None:
         confusion_matrix_output=args.confusion_matrix_output,
         authentication_metrics_output=args.authentication_metrics_output,
         authentication_score_summary_output=args.authentication_score_summary_output,
+        authentication_threshold_policy_output=args.authentication_threshold_policy_output,
     )
 
     true_user_ids = split.y_test.reset_index(drop=True).head().to_list()
@@ -778,11 +843,16 @@ def main() -> None:
     print(authentication_diagnostics.score_summary.to_string(index=False))
 
     print()
+    print("Threshold policy:")
+    print(authentication_diagnostics.threshold_policy.to_string(index=False))
+
+    print()
     print("Diagnostics saved:")
     print(f"Classification report path: {args.classification_report_output}")
     print(f"Confusion matrix path: {args.confusion_matrix_output}")
     print(f"Authentication metrics path: {args.authentication_metrics_output}")
     print(f"Authentication score summary path: {args.authentication_score_summary_output}")
+    print(f"Authentication threshold policy path: {args.authentication_threshold_policy_output}")
 
 
 if __name__ == "__main__":
