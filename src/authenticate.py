@@ -4,9 +4,8 @@ Current step:
 - load saved model, scaler, label encoder and authentication policy;
 - load processed CMU features;
 - rebuild the same train/validation/test split;
-- select one test sample;
-- evaluate a claimed user against the selected sample;
-- print ACCEPT/REJECT decision.
+- authenticate one selected test sample;
+- optionally run a batch authentication smoke-test on the whole test split.
 
 This is a baseline authentication wrapper around the MLP classifier. The score is
 softmax probability assigned to the claimed user class.
@@ -42,6 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_INPUT = PROJECT_ROOT / "models" / "mlp_baseline.keras"
 DEFAULT_LABEL_ENCODER_INPUT = PROJECT_ROOT / "models" / "label_encoder.pkl"
 DEFAULT_AUTH_POLICY_INPUT = PROJECT_ROOT / "models" / "auth_policy.json"
+DEFAULT_BATCH_REPORT_OUTPUT = PROJECT_ROOT / "reports" / "authentication_batch_report.csv"
 DEFAULT_SAMPLE_INDEX = 0
 
 
@@ -81,6 +81,25 @@ class AuthenticationResult:
     target_far: float | None
     actual_far: float | None
     actual_frr: float | None
+
+
+@dataclass(frozen=True)
+class BatchAuthenticationReport:
+    """Batch authentication smoke-test report."""
+
+    genuine_trials: int
+    genuine_accepts: int
+    genuine_rejects: int
+    empirical_frr: float
+    impostor_trials: int
+    impostor_accepts: int
+    impostor_rejects: int
+    empirical_far: float
+    auth_threshold: float
+    target_far: float | None
+    policy_actual_far: float | None
+    policy_actual_frr: float | None
+    predicted_classes: int
 
 
 def load_unscaled_split(input_path: Path) -> TrainValidationTestSplit:
@@ -221,11 +240,7 @@ def authenticate_sample(
             f"{artifacts.label_encoder.classes_[:5].tolist()}..."
         )
 
-    X_scaled = artifacts.scaler.transform(sample.X)
-    probabilities = artifacts.model.predict(
-        X_scaled.astype(np.float32),
-        verbose=0,
-    )[0]
+    probabilities = predict_probabilities(artifacts, sample.X)[0]
 
     claimed_class_index = int(artifacts.label_encoder.transform([effective_claimed_user_id])[0])
     predicted_class_index = int(np.argmax(probabilities))
@@ -251,6 +266,116 @@ def authenticate_sample(
     )
 
 
+def predict_probabilities(
+    artifacts: AuthenticationArtifacts,
+    X: pd.DataFrame,
+) -> np.ndarray:
+    """Scale features and predict class probabilities.
+
+    Args:
+        artifacts: Loaded authentication artifacts.
+        X: Unscaled feature matrix.
+
+    Returns:
+        Probability matrix with shape ``(samples, users)``.
+    """
+    X_scaled = artifacts.scaler.transform(X)
+    return artifacts.model.predict(
+        X_scaled.astype(np.float32),
+        verbose=0,
+    )
+
+
+def run_batch_authentication_test(
+    artifacts: AuthenticationArtifacts,
+    split: TrainValidationTestSplit,
+) -> BatchAuthenticationReport:
+    """Run batch authentication smoke-test on the whole test split.
+
+    Genuine trials:
+        claim = true user for each test sample.
+
+    Impostor trials:
+        claim = every other known user for each test sample.
+
+    Args:
+        artifacts: Loaded authentication artifacts.
+        split: Unscaled train/validation/test split.
+
+    Returns:
+        Batch authentication report.
+    """
+    probabilities = predict_probabilities(artifacts, split.X_test)
+    true_class_indices = artifacts.label_encoder.transform(split.y_test)
+
+    auth_threshold = float(artifacts.auth_policy["auth_threshold"])
+
+    row_indices = np.arange(len(split.y_test))
+    genuine_scores = probabilities[row_indices, true_class_indices]
+    genuine_accepts = int((genuine_scores >= auth_threshold).sum())
+    genuine_trials = int(len(genuine_scores))
+    genuine_rejects = genuine_trials - genuine_accepts
+    empirical_frr = genuine_rejects / genuine_trials
+
+    impostor_mask = np.ones_like(probabilities, dtype=bool)
+    impostor_mask[row_indices, true_class_indices] = False
+    impostor_scores = probabilities[impostor_mask]
+
+    impostor_accepts = int((impostor_scores >= auth_threshold).sum())
+    impostor_trials = int(impostor_scores.size)
+    impostor_rejects = impostor_trials - impostor_accepts
+    empirical_far = impostor_accepts / impostor_trials
+
+    predicted_classes = int(np.unique(np.argmax(probabilities, axis=1)).size)
+
+    return BatchAuthenticationReport(
+        genuine_trials=genuine_trials,
+        genuine_accepts=genuine_accepts,
+        genuine_rejects=genuine_rejects,
+        empirical_frr=float(empirical_frr),
+        impostor_trials=impostor_trials,
+        impostor_accepts=impostor_accepts,
+        impostor_rejects=impostor_rejects,
+        empirical_far=float(empirical_far),
+        auth_threshold=auth_threshold,
+        target_far=optional_float(artifacts.auth_policy.get("target_far")),
+        policy_actual_far=optional_float(artifacts.auth_policy.get("actual_far")),
+        policy_actual_frr=optional_float(artifacts.auth_policy.get("actual_frr")),
+        predicted_classes=predicted_classes,
+    )
+
+
+def save_batch_report(report: BatchAuthenticationReport, output_path: Path) -> None:
+    """Save batch authentication report as CSV.
+
+    Args:
+        report: Batch authentication report.
+        output_path: Output CSV path.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    report_df = pd.DataFrame(
+        [
+            {
+                "genuine_trials": report.genuine_trials,
+                "genuine_accepts": report.genuine_accepts,
+                "genuine_rejects": report.genuine_rejects,
+                "empirical_frr": report.empirical_frr,
+                "impostor_trials": report.impostor_trials,
+                "impostor_accepts": report.impostor_accepts,
+                "impostor_rejects": report.impostor_rejects,
+                "empirical_far": report.empirical_far,
+                "auth_threshold": report.auth_threshold,
+                "target_far": report.target_far,
+                "policy_actual_far": report.policy_actual_far,
+                "policy_actual_frr": report.policy_actual_frr,
+                "predicted_classes": report.predicted_classes,
+            }
+        ]
+    )
+    report_df.to_csv(output_path, index=False)
+
+
 def optional_float(value: Any) -> float | None:
     """Convert optional JSON value to float.
 
@@ -273,7 +398,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         Configured ArgumentParser.
     """
     parser = argparse.ArgumentParser(
-        description="Authenticate one CMU test sample with saved MLP baseline.",
+        description="Authenticate CMU test samples with saved MLP baseline.",
     )
 
     parser.add_argument(
@@ -327,6 +452,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional exact sample_id from test metadata.",
     )
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Run batch authentication smoke-test on the full test split.",
+    )
+    parser.add_argument(
+        "--batch-report-output",
+        type=Path,
+        default=DEFAULT_BATCH_REPORT_OUTPUT,
+        help="Path to output batch authentication report CSV.",
+    )
 
     return parser
 
@@ -343,6 +479,23 @@ def main() -> None:
         auth_policy_path=args.auth_policy_input,
     )
     split = load_unscaled_split(args.input)
+
+    print("Authentication finished.")
+    print(f"Input: {args.input}")
+    print(f"Model input: {args.model_input}")
+    print(f"Scaler input: {args.scaler_input}")
+    print(f"Label encoder input: {args.label_encoder_input}")
+    print(f"Auth policy input: {args.auth_policy_input}")
+
+    if args.batch:
+        report = run_batch_authentication_test(artifacts=artifacts, split=split)
+        save_batch_report(report=report, output_path=args.batch_report_output)
+        print_batch_authentication_report(report=report)
+        print()
+        print("Batch report saved:")
+        print(f"Path: {args.batch_report_output}")
+        return
+
     sample = select_test_sample(
         split=split,
         sample_index=args.sample_index,
@@ -353,13 +506,15 @@ def main() -> None:
         sample=sample,
         claimed_user_id=args.claimed_user_id,
     )
+    print_single_authentication_result(result)
 
-    print("Authentication finished.")
-    print(f"Input: {args.input}")
-    print(f"Model input: {args.model_input}")
-    print(f"Scaler input: {args.scaler_input}")
-    print(f"Label encoder input: {args.label_encoder_input}")
-    print(f"Auth policy input: {args.auth_policy_input}")
+
+def print_single_authentication_result(result: AuthenticationResult) -> None:
+    """Print one-sample authentication result.
+
+    Args:
+        result: One-sample authentication result.
+    """
     print()
     print("Authentication request:")
     print(f"Sample index: {result.sample_index}")
@@ -378,6 +533,29 @@ def main() -> None:
     print(f"Target FAR: {format_optional_float(result.target_far)}")
     print(f"Actual FAR: {format_optional_float(result.actual_far)}")
     print(f"Actual FRR: {format_optional_float(result.actual_frr)}")
+
+
+def print_batch_authentication_report(report: BatchAuthenticationReport) -> None:
+    """Print batch authentication report.
+
+    Args:
+        report: Batch authentication report.
+    """
+    print()
+    print("Batch authentication test:")
+    print(f"Genuine trials: {report.genuine_trials}")
+    print(f"Genuine accepts: {report.genuine_accepts}")
+    print(f"Genuine rejects: {report.genuine_rejects}")
+    print(f"Empirical FRR: {report.empirical_frr:.6f}")
+    print(f"Impostor trials: {report.impostor_trials}")
+    print(f"Impostor accepts: {report.impostor_accepts}")
+    print(f"Impostor rejects: {report.impostor_rejects}")
+    print(f"Empirical FAR: {report.empirical_far:.6f}")
+    print(f"Auth threshold: {report.auth_threshold:.6f}")
+    print(f"Target FAR: {format_optional_float(report.target_far)}")
+    print(f"Policy actual FAR: {format_optional_float(report.policy_actual_far)}")
+    print(f"Policy actual FRR: {format_optional_float(report.policy_actual_frr)}")
+    print(f"Predicted classes: {report.predicted_classes}")
 
 
 def format_optional_float(value: float | None) -> str:
