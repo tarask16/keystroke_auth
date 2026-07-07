@@ -7,23 +7,47 @@
     ],
     "editor.formatOnSave": true,
     "ruff.enable": true,
-    "taskButtons.showCounter": true,
-    "taskButtons.buttons": [
-        {
-            "label": "$(database) data_loader",
-            "task": "Run data_loader"
-        },
-        {
-            "label": "$(beaker) tests",
-            "task": "Run tests"
-        },
-        {
-            "label": "$(check) ruff",
-            "task": "Ruff check"
-        },
-        {
-            "label": "$(tools) ruff fix",
-            "task": "Ruff fix"
-        }
-    ]
+    "actionButtons": {
+        "defaultColor": "white",
+        "loadNpmCommands": false,
+        "reloadButton": "↻",
+        "commands": [
+            {
+                "name": "$(database) data_loader",
+                "color": "lightgreen",
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe -m src.data_loader",
+                "cwd": "${workspaceFolder}",
+                "singleInstance": true,
+                "focus": true,
+                "tooltip": "Run CMU data_loader"
+            },
+            {
+                "name": "$(beaker) tests",
+                "color": "lightskyblue",
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe -m pytest",
+                "cwd": "${workspaceFolder}",
+                "singleInstance": true,
+                "focus": true,
+                "tooltip": "Run pytest"
+            },
+            {
+                "name": "$(check) ruff",
+                "color": "khaki",
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe -m ruff check .",
+                "cwd": "${workspaceFolder}",
+                "singleInstance": true,
+                "focus": true,
+                "tooltip": "Run Ruff check"
+            },
+            {
+                "name": "$(tools) ruff fix",
+                "color": "orange",
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe -m ruff check . --fix",
+                "cwd": "${workspaceFolder}",
+                "singleInstance": true,
+                "focus": true,
+                "tooltip": "Run Ruff auto-fix"
+            }
+        ]
+    }
 }
