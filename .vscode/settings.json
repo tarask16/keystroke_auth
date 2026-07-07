@@ -1,4 +1,4 @@
-﻿{
+{
     "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
@@ -6,5 +6,24 @@
         "tests"
     ],
     "editor.formatOnSave": true,
-    "ruff.enable": true
+    "ruff.enable": true,
+    "taskButtons.showCounter": true,
+    "taskButtons.buttons": [
+        {
+            "label": "$(database) data_loader",
+            "task": "Run data_loader"
+        },
+        {
+            "label": "$(beaker) tests",
+            "task": "Run tests"
+        },
+        {
+            "label": "$(check) ruff",
+            "task": "Ruff check"
+        },
+        {
+            "label": "$(tools) ruff fix",
+            "task": "Ruff fix"
+        }
+    ]
 }
