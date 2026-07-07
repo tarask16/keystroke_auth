@@ -8,12 +8,14 @@ Current step:
 - print extended classification diagnostics;
 - calculate authentication-oriented FAR, FRR and EER diagnostics;
 - build threshold policy for target FAR levels;
+- save baseline authentication policy to JSON;
 - save reports to CSV.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,6 +51,8 @@ DEFAULT_AUTHENTICATION_SCORE_SUMMARY_OUTPUT = (
 DEFAULT_AUTHENTICATION_THRESHOLD_POLICY_OUTPUT = (
     PROJECT_ROOT / "reports" / "authentication_threshold_policy.csv"
 )
+DEFAULT_AUTH_POLICY_OUTPUT = PROJECT_ROOT / "models" / "auth_policy.json"
+DEFAULT_AUTH_POLICY_TARGET_FAR = 0.01
 DEFAULT_TARGET_FAR_VALUES = (0.001, 0.005, 0.01, 0.02)
 DEFAULT_TOP_N = 10
 DEFAULT_THRESHOLD_POINTS = 1001
@@ -110,6 +114,22 @@ class AuthenticationDiagnostics:
     threshold_table: pd.DataFrame
     score_summary: pd.DataFrame
     threshold_policy: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class AuthPolicy:
+    """Container for selected authentication policy."""
+
+    model_name: str
+    score_type: str
+    auth_threshold: float
+    target_far: float
+    actual_far: float
+    actual_frr: float
+    eer: float
+    eer_threshold: float
+    genuine_trials: int
+    impostor_trials: int
 
 
 def load_unscaled_split(input_path: Path) -> TrainValidationTestSplit:
@@ -610,6 +630,76 @@ def summarize_scores(score_type: str, scores: np.ndarray) -> dict[str, float | s
     }
 
 
+def build_auth_policy(
+    authentication_diagnostics: AuthenticationDiagnostics,
+    target_far: float = DEFAULT_AUTH_POLICY_TARGET_FAR,
+) -> AuthPolicy:
+    """Build baseline authentication policy from threshold recommendations.
+
+    Args:
+        authentication_diagnostics: Authentication diagnostics.
+        target_far: Target FAR selected for the baseline policy.
+
+    Returns:
+        Selected authentication policy.
+
+    Raises:
+        ValueError: If requested target FAR is absent in threshold policy table.
+    """
+    threshold_policy = authentication_diagnostics.threshold_policy
+    selected_rows = threshold_policy.loc[np.isclose(threshold_policy["target_far"], target_far)]
+
+    if selected_rows.empty:
+        available_values = threshold_policy["target_far"].to_list()
+        raise ValueError(
+            f"Target FAR {target_far} is absent in threshold policy. "
+            f"Available values: {available_values}"
+        )
+
+    selected = selected_rows.iloc[0]
+
+    return AuthPolicy(
+        model_name="mlp_baseline",
+        score_type="softmax_claimed_user_probability",
+        auth_threshold=float(selected["threshold"]),
+        target_far=float(selected["target_far"]),
+        actual_far=float(selected["actual_far"]),
+        actual_frr=float(selected["actual_frr"]),
+        eer=float(authentication_diagnostics.eer),
+        eer_threshold=float(authentication_diagnostics.eer_threshold),
+        genuine_trials=int(authentication_diagnostics.genuine_trials),
+        impostor_trials=int(authentication_diagnostics.impostor_trials),
+    )
+
+
+def save_auth_policy(policy: AuthPolicy, output_path: Path) -> None:
+    """Save selected authentication policy to JSON.
+
+    Args:
+        policy: Selected authentication policy.
+        output_path: Output JSON path.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "model_name": policy.model_name,
+        "score_type": policy.score_type,
+        "auth_threshold": policy.auth_threshold,
+        "target_far": policy.target_far,
+        "actual_far": policy.actual_far,
+        "actual_frr": policy.actual_frr,
+        "eer": policy.eer,
+        "eer_threshold": policy.eer_threshold,
+        "genuine_trials": policy.genuine_trials,
+        "impostor_trials": policy.impostor_trials,
+    }
+
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def save_diagnostics(
     classification_diagnostics: ClassificationDiagnostics,
     authentication_diagnostics: AuthenticationDiagnostics,
@@ -721,6 +811,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path to output authentication threshold policy CSV.",
     )
     parser.add_argument(
+        "--auth-policy-output",
+        type=Path,
+        default=DEFAULT_AUTH_POLICY_OUTPUT,
+        help="Path to output authentication policy JSON.",
+    )
+    parser.add_argument(
+        "--auth-policy-target-far",
+        type=float,
+        default=DEFAULT_AUTH_POLICY_TARGET_FAR,
+        help="Target FAR selected for baseline authentication policy.",
+    )
+    parser.add_argument(
         "--top-n",
         type=int,
         default=DEFAULT_TOP_N,
@@ -778,6 +880,11 @@ def main() -> None:
         y_probabilities=result.y_test_probabilities,
         threshold_points=args.threshold_points,
     )
+    auth_policy = build_auth_policy(
+        authentication_diagnostics=authentication_diagnostics,
+        target_far=args.auth_policy_target_far,
+    )
+    save_auth_policy(policy=auth_policy, output_path=args.auth_policy_output)
     save_diagnostics(
         classification_diagnostics=classification_diagnostics,
         authentication_diagnostics=authentication_diagnostics,
@@ -847,12 +954,23 @@ def main() -> None:
     print(authentication_diagnostics.threshold_policy.to_string(index=False))
 
     print()
+    print("Authentication policy saved:")
+    print(f"Path: {args.auth_policy_output}")
+    print(f"Model name: {auth_policy.model_name}")
+    print(f"Score type: {auth_policy.score_type}")
+    print(f"Auth threshold: {auth_policy.auth_threshold:.6f}")
+    print(f"Target FAR: {auth_policy.target_far:.6f}")
+    print(f"Actual FAR: {auth_policy.actual_far:.6f}")
+    print(f"Actual FRR: {auth_policy.actual_frr:.6f}")
+
+    print()
     print("Diagnostics saved:")
     print(f"Classification report path: {args.classification_report_output}")
     print(f"Confusion matrix path: {args.confusion_matrix_output}")
     print(f"Authentication metrics path: {args.authentication_metrics_output}")
     print(f"Authentication score summary path: {args.authentication_score_summary_output}")
     print(f"Authentication threshold policy path: {args.authentication_threshold_policy_output}")
+    print(f"Authentication policy path: {args.auth_policy_output}")
 
 
 if __name__ == "__main__":

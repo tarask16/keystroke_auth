@@ -1,0 +1,12 @@
+{
+  "model_name": "mlp_baseline",
+  "score_type": "softmax_claimed_user_probability",
+  "auth_threshold": 0.108,
+  "target_far": 0.01,
+  "actual_far": 0.009990196078431372,
+  "actual_frr": 0.055392156862745096,
+  "eer": 0.025924019607843136,
+  "eer_threshold": 0.034,
+  "genuine_trials": 4080,
+  "impostor_trials": 204000
+}
