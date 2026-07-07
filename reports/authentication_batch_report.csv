@@ -1,0 +1,2 @@
+genuine_trials,genuine_accepts,genuine_rejects,empirical_frr,impostor_trials,impostor_accepts,impostor_rejects,empirical_far,auth_threshold,target_far,policy_actual_far,policy_actual_frr,predicted_classes
+4080,3854,226,0.055392156862745096,204000,2038,201962,0.009990196078431372,0.108,0.01,0.009990196078431372,0.055392156862745096,51
