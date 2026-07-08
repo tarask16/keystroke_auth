@@ -1,0 +1,5 @@
+objective,margin,embedding_dim,hidden_units,dropout_rate,learning_rate,epochs,batch_size,patience,random_state,embedding_activation,l2_normalize,candidate
+triplet,0.1,32,128,0.2,0.001,50,256,8,42,,True,triplet_m0p1_l2
+triplet,0.2,32,128,0.2,0.001,50,256,8,42,,True,triplet_m0p2_l2
+triplet,0.5,32,128,0.2,0.001,50,256,8,42,,True,triplet_m0p5_l2
+triplet,1.0,32,128,0.2,0.001,50,256,8,42,,True,triplet_m1_l2
