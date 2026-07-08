@@ -1,0 +1,13 @@
+{
+  "model_name": "mlp_v2_batchnorm",
+  "score_type": "softmax_claimed_user_probability",
+  "auth_threshold": 0.0586082898080349,
+  "target_far": 0.01,
+  "actual_far": 0.010004901960784313,
+  "actual_frr": 0.025245098039215687,
+  "eer": 0.017142156862745124,
+  "eer_threshold": 0.027535224333405495,
+  "test_accuracy": 0.9178921580314636,
+  "genuine_trials": 4080,
+  "impostor_trials": 204000
+}

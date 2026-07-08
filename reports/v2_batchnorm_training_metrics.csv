@@ -1,0 +1,2 @@
+model_name,params,epochs_run,best_validation_accuracy,final_train_accuracy,final_validation_accuracy,test_loss,test_accuracy,eer,eer_threshold,target_far,auth_threshold,actual_far,actual_frr
+mlp_v2_batchnorm,16243,20,0.9090073704719543,0.859987735748291,0.9090073704719543,0.303182452917099,0.9178921580314636,0.017142156862745124,0.027535224333405495,0.01,0.0586082898080349,0.010004901960784313,0.025245098039215687
