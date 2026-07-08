@@ -71,6 +71,27 @@ def test_build_siamese_model_output_shape() -> None:
     assert distances.shape == (5, 1)
 
 
+def test_siamese_encoder_can_be_saved_and_loaded(tmp_path: Path) -> None:
+    """Проверить, что encoder без Lambda-слоя корректно десериализуется."""
+    import tensorflow as tf
+
+    encoder = build_siamese_encoder(input_dim=31, embedding_dim=8, hidden_units=16)
+    sample = np.zeros((2, 31), dtype=np.float32)
+    original_embeddings = encoder.predict(sample, verbose=0)
+
+    encoder_path = tmp_path / "siamese_encoder.keras"
+    encoder.save(encoder_path)
+    restored_encoder = tf.keras.models.load_model(
+        encoder_path,
+        compile=False,
+        safe_mode=False,
+    )
+    restored_embeddings = restored_encoder.predict(sample, verbose=0)
+
+    assert restored_encoder.output_shape == (None, 8)
+    assert restored_embeddings.shape == original_embeddings.shape
+
+
 def test_load_pair_dataset_validates_npz_structure(tmp_path: Path) -> None:
     """Проверить загрузку pair dataset из `.npz`."""
     pair_path = tmp_path / "pairs.npz"

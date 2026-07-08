@@ -17,6 +17,57 @@ import tensorflow as tf
 
 
 @tf.keras.utils.register_keras_serializable(package="keystroke_auth")
+class L2NormalizeLayer(tf.keras.layers.Layer):
+    """Сериализуемый слой L2-нормализации embedding-векторов.
+
+    Слой заменяет Keras `Lambda`, потому что сохранённые Lambda-слои
+    без явного `output_shape` могут не загружаться в Keras 3.
+    """
+
+    def __init__(self, axis: int = 1, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.axis = int(axis)
+
+    def call(self, inputs: tf.Tensor) -> tf.Tensor:
+        """Вернуть L2-нормализованный batch embedding-векторов."""
+        return tf.math.l2_normalize(inputs, axis=self.axis)
+
+    def compute_output_shape(self, input_shape: tuple[int | None, ...]) -> tuple[int | None, ...]:
+        """Форма выхода совпадает с формой входа."""
+        return input_shape
+
+    def get_config(self) -> dict[str, Any]:
+        """Вернуть параметры слоя для сериализации Keras."""
+        config = super().get_config()
+        config.update({"axis": self.axis})
+        return config
+
+
+@tf.keras.utils.register_keras_serializable(package="keystroke_auth")
+class EuclideanDistanceLayer(tf.keras.layers.Layer):
+    """Сериализуемый слой Euclidean distance для Siamese-модели."""
+
+    def call(self, inputs: list[tf.Tensor]) -> tf.Tensor:
+        """Рассчитать расстояние между двумя batch-ами embedding-векторов."""
+        if len(inputs) != 2:
+            raise ValueError("EuclideanDistanceLayer expects exactly two tensors.")
+
+        embedding_a, embedding_b = inputs
+        squared_difference = tf.square(embedding_a - embedding_b)
+        squared_distance = tf.reduce_sum(squared_difference, axis=1, keepdims=True)
+        return tf.sqrt(tf.maximum(squared_distance, tf.keras.backend.epsilon()))
+
+    def compute_output_shape(
+        self,
+        input_shape: list[tuple[int | None, ...]],
+    ) -> tuple[int | None, int]:
+        """Вернуть форму расстояний `(batch, 1)`."""
+        if len(input_shape) != 2:
+            raise ValueError("EuclideanDistanceLayer expects exactly two input shapes.")
+        return (input_shape[0][0], 1)
+
+
+@tf.keras.utils.register_keras_serializable(package="keystroke_auth")
 class ContrastiveLoss(tf.keras.losses.Loss):
     """Contrastive loss для Siamese metric-learning.
 
@@ -157,10 +208,7 @@ def build_siamese_encoder(
     x = tf.keras.layers.BatchNormalization(name="bn_embedding")(x)
 
     if l2_normalize:
-        outputs = tf.keras.layers.Lambda(
-            lambda tensor: tf.math.l2_normalize(tensor, axis=1),
-            name="l2_normalized_embedding",
-        )(x)
+        outputs = L2NormalizeLayer(name="l2_normalized_embedding")(x)
     else:
         outputs = tf.keras.layers.Activation("linear", name="embedding_output")(x)
 
@@ -168,7 +216,11 @@ def build_siamese_encoder(
 
 
 def euclidean_distance(tensors: list[tf.Tensor]) -> tf.Tensor:
-    """Рассчитать Euclidean distance между двумя batch-ами embedding-векторов."""
+    """Рассчитать Euclidean distance между двумя batch-ами embedding-векторов.
+
+    Функция оставлена для обратной совместимости с ранними тестами и импортами.
+    Для сериализуемой модели используется `EuclideanDistanceLayer`.
+    """
     if len(tensors) != 2:
         raise ValueError("euclidean_distance expects exactly two tensors.")
 
@@ -217,9 +269,7 @@ def build_siamese_model(
 
     embedding_a = encoder(input_a)
     embedding_b = encoder(input_b)
-    distance = tf.keras.layers.Lambda(euclidean_distance, name="euclidean_distance")(
-        [embedding_a, embedding_b]
-    )
+    distance = EuclideanDistanceLayer(name="euclidean_distance")([embedding_a, embedding_b])
 
     model = tf.keras.Model(inputs=[input_a, input_b], outputs=distance, name="siamese_model")
     model.compile(

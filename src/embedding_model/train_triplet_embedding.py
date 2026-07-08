@@ -191,7 +191,11 @@ def run_training(
         x=[train_triplets.anchor, train_triplets.positive, train_triplets.negative],
         y=train_triplets.dummy_labels,
         validation_data=(
-            [validation_triplets.anchor, validation_triplets.positive, validation_triplets.negative],
+            [
+                validation_triplets.anchor,
+                validation_triplets.positive,
+                validation_triplets.negative,
+            ],
             validation_triplets.dummy_labels,
         ),
         epochs=epochs,
@@ -234,7 +238,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """Создать CLI parser для обучения Triplet-модели."""
     parser = argparse.ArgumentParser(description="Train encoder with triplet loss.")
     parser.add_argument("--train-triplets", type=Path, default=DEFAULT_TRAIN_TRIPLETS_FILE)
-    parser.add_argument("--validation-triplets", type=Path, default=DEFAULT_VALIDATION_TRIPLETS_FILE)
+    parser.add_argument(
+        "--validation-triplets",
+        type=Path,
+        default=DEFAULT_VALIDATION_TRIPLETS_FILE,
+    )
     parser.add_argument("--model-output", type=Path, default=DEFAULT_MODEL_FILE)
     parser.add_argument("--encoder-output", type=Path, default=DEFAULT_ENCODER_FILE)
     parser.add_argument("--metrics-output", type=Path, default=DEFAULT_METRICS_FILE)
