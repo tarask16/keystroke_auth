@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "keystroke-auth"
 version = "0.1.0"
 description = "Keystroke dynamics authentication prototype using TensorFlow/Keras"
@@ -6,6 +6,10 @@ requires-python = ">=3.11"
 authors = [
     { name = "Project Author" }
 ]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
 
 [tool.ruff]
 line-length = 100
