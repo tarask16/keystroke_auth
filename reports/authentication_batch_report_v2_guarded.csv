@@ -1,0 +1,2 @@
+model_name,policy_name,genuine_trials,genuine_accepts,genuine_rejects,empirical_frr,impostor_trials,impostor_accepts,impostor_rejects,empirical_far,thresholds_count,fallback_threshold,guarded_applied_users_count,predicted_classes
+mlp_v2_batchnorm,guarded_per_user_thresholds_v2_batchnorm,4080,3976,104,0.025490196078431372,204000,1961,202039,0.009612745098039216,51,0.0586082898080349,5,51
