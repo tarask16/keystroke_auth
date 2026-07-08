@@ -1,0 +1,2 @@
+model_name,genuine_trials,genuine_accepts,genuine_rejects,empirical_frr,impostor_trials,impostor_accepts,impostor_rejects,empirical_far,auth_threshold,target_far,policy_actual_far,policy_actual_frr,policy_eer,predicted_classes
+mlp_v2_batchnorm,4080,3977,103,0.025245098039215687,204000,2041,201959,0.010004901960784313,0.0586082898080349,0.01,0.010004901960784313,0.025245098039215687,0.017142156862745124,51
