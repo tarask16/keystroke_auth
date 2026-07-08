@@ -1,1 +1,1 @@
-"""Embedding-based verification module for Keystroke Auth stage 6."""
+"""Модули embedding-model этапов для metric-learning экспериментов."""

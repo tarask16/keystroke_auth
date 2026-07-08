@@ -241,10 +241,7 @@ def build_metadata_frame(
     session_column = find_first_existing_column(split_frame, SESSION_COLUMN_CANDIDATES)
     repetition_column = find_first_existing_column(split_frame, REPETITION_COLUMN_CANDIDATES)
 
-    if sample_id_column is None:
-        sample_ids = row_indices
-    else:
-        sample_ids = split_frame[sample_id_column].tolist()
+    sample_ids = row_indices if sample_id_column is None else split_frame[sample_id_column].tolist()
 
     if session_column is None:
         session_ids = [None] * len(split_frame)

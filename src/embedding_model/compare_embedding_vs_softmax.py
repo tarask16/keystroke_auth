@@ -52,7 +52,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
 
-import numpy as np
 import pandas as pd
 
 from src.embedding_model.embedding import EmbeddingModelPaths
