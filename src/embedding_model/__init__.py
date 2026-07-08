@@ -1,1 +1,1 @@
-"""Модули embedding-model этапов для metric-learning экспериментов."""
+"""Модули embedding-аутентификации и Stage 7 metric-learning."""
