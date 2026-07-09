@@ -1,2 +1,5 @@
 strategy,margin,top_k,mining_distance,embedding_dim,hidden_units,dropout_rate,learning_rate,epochs,batch_size,patience,random_state,embedding_activation,l2_normalize,candidate
-semi_hard,0.1,16,cosine,32,128,0.2,0.001,2,512,8,42,,True,triplet_semihard_m0p1_top16_cosine_l2
+semi_hard,0.1,32,cosine,32,128,0.2,0.001,50,256,8,42,,True,triplet_semihard_m0p1_top32_cosine_l2
+semi_hard,0.2,32,cosine,32,128,0.2,0.001,50,256,8,42,,True,triplet_semihard_m0p2_top32_cosine_l2
+hard,0.1,32,cosine,32,128,0.2,0.001,50,256,8,42,,True,triplet_hard_m0p1_top32_cosine_l2
+hard,0.2,32,cosine,32,128,0.2,0.001,50,256,8,42,,True,triplet_hard_m0p2_top32_cosine_l2
